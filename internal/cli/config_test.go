@@ -148,6 +148,22 @@ func TestParseAllowsExistingOutputWithForce(t *testing.T) {
 	}
 }
 
+func TestParseRejectsNonMP4Output(t *testing.T) {
+	input, model := writeInputAndModel(t)
+	output := filepath.Join(t.TempDir(), "episode.mov")
+	if _, err := Parse([]string{input, "--model", model, "--output", output}, os.Getenv); err == nil {
+		t.Fatal("Parse returned nil error")
+	}
+}
+
+func TestParseRejectsOutputEqualToInputEvenWithForce(t *testing.T) {
+	input, model := writeInputAndModel(t)
+	_, err := Parse([]string{input, "--model", model, "--output", input, "--force"}, os.Getenv)
+	if err == nil {
+		t.Fatal("Parse returned nil error")
+	}
+}
+
 func writeInputAndModel(t *testing.T) (string, string) {
 	t.Helper()
 	dir := t.TempDir()

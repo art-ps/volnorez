@@ -114,6 +114,12 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	if output == input {
+		return Config{}, fmt.Errorf("output must not be the input file")
+	}
+	if !strings.EqualFold(filepath.Ext(output), ".mp4") {
+		return Config{}, fmt.Errorf("output must be an MP4 file")
+	}
 	if !values.force {
 		if _, err := os.Stat(output); err == nil {
 			return Config{}, fmt.Errorf("output %q already exists; use --force to replace it", output)
