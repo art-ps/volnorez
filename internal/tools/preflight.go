@@ -57,10 +57,17 @@ func requireCapabilities(ctx context.Context, r Runner, command Command, require
 	output := string(result.Stdout) + "\n" + string(result.Stderr)
 	for _, capability := range required {
 		if !hasToken(output, capability) {
-			return fmt.Errorf("missing capability %s", capability)
+			return fmt.Errorf("missing capability %s%s", capability, capabilityHint(capability))
 		}
 	}
 	return nil
+}
+
+func capabilityHint(capability string) string {
+	if capability == "subtitles" {
+		return " (ffmpeg built without libass; on macOS run: brew unlink ffmpeg && brew link --force ffmpeg-full)"
+	}
+	return ""
 }
 
 func hasToken(output, token string) bool {
