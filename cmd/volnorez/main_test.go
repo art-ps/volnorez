@@ -159,6 +159,30 @@ func TestRunWithPrintsTersePipelineError(t *testing.T) {
 	}
 }
 
+func TestRunWithNormalizesCompleteErrorToOneLine(t *testing.T) {
+	args, _ := validArgs(t)
+	var stdout, stderr bytes.Buffer
+	code := runWith(args, os.Getenv, &stdout, &stderr, appDeps{
+		context: backgroundContext,
+		pipelineDeps: func(tools.Runner) pipeline.Dependencies {
+			return pipeline.Dependencies{}
+		},
+		pipeline: func(context.Context, cli.Config, pipeline.Dependencies, io.Writer) (string, error) {
+			commandErr := &tools.CommandError{
+				Command: tools.Command{Name: "bad\npath\rtool"},
+				Err:     errors.New("exit\nstatus"),
+			}
+			return "", fmt.Errorf("render\r\nfailed: %w", commandErr)
+		},
+	})
+	if code != 5 || stdout.Len() != 0 {
+		t.Fatalf("code = %d, stdout = %q", code, stdout.String())
+	}
+	if got, want := stderr.String(), "volnorez: render failed: bad path tool: exit status\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
 func TestRunWithVerboseStreamsChildDiagnosticsToStderr(t *testing.T) {
 	args, _ := validArgs(t, "--verbose")
 	var stdout, stderr bytes.Buffer

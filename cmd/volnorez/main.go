@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"volnorez/internal/cli"
@@ -46,7 +47,7 @@ func runWith(args []string, getenv func(string) string, stdout, stderr io.Writer
 		return 0
 	}
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "volnorez:", err)
+		_, _ = fmt.Fprintln(stderr, "volnorez:", oneLineError(err))
 		return cli.Code(err)
 	}
 
@@ -55,9 +56,13 @@ func runWith(args []string, getenv func(string) string, stdout, stderr io.Writer
 	runner := tools.ExecRunner{Verbose: cfg.Verbose, Diagnostic: stderr}
 	output, err := deps.pipeline(ctx, cfg, deps.pipelineDeps(runner), stderr)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "volnorez:", err)
+		_, _ = fmt.Fprintln(stderr, "volnorez:", oneLineError(err))
 		return pipeline.Code(err)
 	}
 	_, _ = fmt.Fprintln(stdout, output)
 	return 0
+}
+
+func oneLineError(err error) string {
+	return strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(err.Error())
 }

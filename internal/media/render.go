@@ -134,15 +134,15 @@ func VerifyOutput(ctx context.Context, r tools.Runner, ffprobe, output string, e
 				return fmt.Errorf("parse output audio bitrate %q: %w", stream.BitRate, err)
 			}
 			const targetBitRate int64 = 192000
-			// ffprobe reports encoded average, which can be well below the requested
-			// AAC target for speech and for very short streams. Keep this a sanity
-			// band; BuildRenderCommand separately pins the encoder target to 192k.
-			minimum, maximum := targetBitRate*2/5, targetBitRate*5/4
+			// ffprobe reports encoded average, which can approach zero for silence
+			// even when the requested AAC target is 192k. Keep only an upper sanity
+			// ceiling; BuildRenderCommand separately pins the encoder target to 192k.
+			maximum := targetBitRate * 5 / 4
 			if expected < 2*time.Second {
-				minimum, maximum = targetBitRate/4, targetBitRate*3/2
+				maximum = targetBitRate * 3 / 2
 			}
-			if bitRate < minimum || bitRate > maximum {
-				return fmt.Errorf("output audio bitrate %d is outside %d..%d", bitRate, minimum, maximum)
+			if bitRate <= 0 || bitRate > maximum {
+				return fmt.Errorf("output audio bitrate %d is outside 1..%d", bitRate, maximum)
 			}
 		}
 	}

@@ -153,7 +153,7 @@ func TestVerifyOutputRejectsContractViolations(t *testing.T) {
 		{name: "wrong audio codec", output: replaceProbeField(validRenderProbeJSON, `"codec_name":"aac"`, `"codec_name":"mp3"`)},
 		{name: "wrong container", output: replaceProbeField(validRenderProbeJSON, `"format_name":"mov,mp4,m4a,3gp,3g2,mj2"`, `"format_name":"matroska,webm"`)},
 		{name: "mono audio", output: replaceProbeField(validRenderProbeJSON, `"channels":2`, `"channels":1`)},
-		{name: "audio bitrate too low", output: replaceProbeField(validRenderProbeJSON, `"bit_rate":"192000"`, `"bit_rate":"64000"`)},
+		{name: "non-positive audio bitrate", output: replaceProbeField(validRenderProbeJSON, `"bit_rate":"192000"`, `"bit_rate":"0"`)},
 		{name: "audio bitrate too high", output: replaceProbeField(validRenderProbeJSON, `"bit_rate":"192000"`, `"bit_rate":"250000"`)},
 		{name: "wrong pixel format", output: replaceProbeField(validRenderProbeJSON, `"pix_fmt":"yuv420p"`, `"pix_fmt":"yuv444p"`)},
 		{name: "duration delta over limit", output: replaceProbeField(validRenderProbeJSON, `"duration":"45.000"`, `"duration":"45.201"`)},
@@ -194,11 +194,74 @@ func TestVerifyOutputAllowsContentDependentAverageBitrate(t *testing.T) {
 	}
 }
 
+func TestVerifyOutputAllowsSilentAverageBitrate(t *testing.T) {
+	output := replaceProbeField(validRenderProbeJSON, `"bit_rate":"192000"`, `"bit_rate":"2088"`)
+	r := &renderRunner{result: tools.Result{Stdout: []byte(output)}}
+	if err := VerifyOutput(context.Background(), r, "/bin/ffprobe", writeTestMP4(t, true), 45*time.Second); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestVerifyOutputRejectsNonFaststartMP4(t *testing.T) {
 	r := &renderRunner{result: tools.Result{Stdout: []byte(validRenderProbeJSON)}}
 	err := VerifyOutput(context.Background(), r, "/bin/ffprobe", writeTestMP4(t, false), 45*time.Second)
 	if err == nil || !strings.Contains(err.Error(), "faststart") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestVerifyFaststartBoxParsing(t *testing.T) {
+	box := func(name string, size uint32) []byte {
+		data := make([]byte, 8)
+		binary.BigEndian.PutUint32(data, size)
+		copy(data[4:], name)
+		return data
+	}
+	extendedBox := func(name string, size uint64) []byte {
+		data := make([]byte, 16)
+		binary.BigEndian.PutUint32(data, 1)
+		copy(data[4:], name)
+		binary.BigEndian.PutUint64(data[8:], size)
+		return data
+	}
+	ordinary := func(name string) []byte { return box(name, 8) }
+	join := func(boxes ...[]byte) []byte {
+		var data []byte
+		for _, current := range boxes {
+			data = append(data, current...)
+		}
+		return data
+	}
+	tests := []struct {
+		name    string
+		data    []byte
+		wantErr string
+	}{
+		{name: "extended size", data: join(ordinary("ftyp"), extendedBox("moov", 16), ordinary("mdat"))},
+		{name: "zero size to EOF", data: join(ordinary("ftyp"), ordinary("moov"), box("mdat", 0))},
+		{name: "truncated ordinary header", data: []byte{0, 0, 0, 8, 'm', 'o', 'o'}, wantErr: "truncated header"},
+		{name: "truncated extended header", data: extendedBox("moov", 16)[:8], wantErr: "truncated extended header"},
+		{name: "ordinary size below header", data: box("moov", 4), wantErr: "invalid box size"},
+		{name: "extended size below header", data: extendedBox("moov", 8), wantErr: "invalid box size"},
+		{name: "size beyond file", data: box("moov", 64), wantErr: "invalid box size"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "boxes.mp4")
+			if err := os.WriteFile(path, test.data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := verifyFaststart(path)
+			if test.wantErr == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("error = %v, want containing %q", err, test.wantErr)
+			}
+		})
 	}
 }
 

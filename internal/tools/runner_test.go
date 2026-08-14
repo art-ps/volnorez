@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -56,30 +57,56 @@ func TestExecRunnerReturnsContextCanceled(t *testing.T) {
 
 func TestExecRunnerCancellationTerminatesAndWaitsForRunningChild(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	started := make(chan struct{})
+	defer cancel()
+	started := make(chan int, 1)
 	diagnostic := &startWriter{started: started}
 	done := make(chan error, 1)
 	go func() {
 		_, err := (ExecRunner{Verbose: true, Diagnostic: diagnostic}).Run(ctx, Command{
 			Name: os.Args[0],
-			Args: []string{"-test.run=TestHelperProcess", "--", "started", "", "wait-for-kill"},
+			Args: []string{"-test.run=TestHelperProcess", "--", "payload", "", "wait-for-kill"},
 		})
 		done <- err
 	}()
 
 	select {
-	case <-started:
+	case pid := <-started:
+		if pid <= 0 {
+			t.Fatalf("invalid child PID %d", pid)
+		}
+		cancel()
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("error = %v, want context.Canceled", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("Run did not wait for canceled helper child to terminate")
+		}
+		if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
+			t.Fatalf("child PID %d still exists after Run returned: %v", pid, err)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("helper child did not start")
 	}
-	cancel()
+}
+
+func TestStartWriterDoesNotTreatInvocationAsChildReadiness(t *testing.T) {
+	started := make(chan int, 1)
+	writer := &startWriter{started: started}
+	invocation := formatCommand(Command{
+		Name: os.Args[0], Args: []string{"-test.run=TestHelperProcess", "--", "payload", "", "wait-for-kill"},
+	}) + "\n"
+	if strings.Contains(invocation, childReadyPrefix) {
+		t.Fatalf("child marker unexpectedly appears in invocation: %q", invocation)
+	}
+	if _, err := writer.Write([]byte(invocation)); err != nil {
+		t.Fatal(err)
+	}
 	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("error = %v, want context.Canceled", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Run did not wait for canceled helper child to terminate")
+	case <-started:
+		t.Fatal("verbose invocation falsely signaled child readiness")
+	default:
 	}
 }
 
@@ -128,7 +155,7 @@ func TestHelperProcess(t *testing.T) {
 	for i, arg := range args {
 		if arg == "--" && i+2 < len(args) {
 			if i+3 < len(args) && args[i+3] == "wait-for-kill" {
-				_, _ = os.Stdout.WriteString(args[i+1])
+				_, _ = fmt.Fprintf(os.Stdout, "%s%d\n", childReadyPrefix, os.Getpid())
 				ready := make(chan os.Signal, 1)
 				signal.Notify(ready, os.Interrupt, syscall.SIGTERM)
 				<-ready
@@ -160,13 +187,32 @@ func TestHelperProcess(t *testing.T) {
 }
 
 type startWriter struct {
-	started chan struct{}
+	started chan int
 	once    sync.Once
+	mu      sync.Mutex
+	buffer  strings.Builder
 }
 
 func (w *startWriter) Write(p []byte) (int, error) {
-	if strings.Contains(string(p), "started") {
-		w.once.Do(func() { close(w.started) })
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_, _ = w.buffer.Write(p)
+	text := w.buffer.String()
+	start := strings.Index(text, childReadyPrefix)
+	if start < 0 {
+		return len(p), nil
 	}
+	value := text[start+len(childReadyPrefix):]
+	end := strings.IndexByte(value, '\n')
+	if end < 0 {
+		return len(p), nil
+	}
+	pid, err := strconv.Atoi(value[:end])
+	if err != nil {
+		return 0, err
+	}
+	w.once.Do(func() { w.started <- pid })
 	return len(p), nil
 }
+
+const childReadyPrefix = "child-origin-ready:"

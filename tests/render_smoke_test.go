@@ -89,6 +89,69 @@ func TestRenderSmoke(t *testing.T) {
 	}
 }
 
+func TestRenderSmokeAcceptsSilentAndSparseAudio(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	ffprobe, err := exec.LookPath("ffprobe")
+	if err != nil {
+		t.Skip("ffprobe not installed")
+	}
+	tests := []struct {
+		name   string
+		source string
+	}{
+		{name: "silence", source: "anullsrc=r=44100:cl=stereo:d=1"},
+		{name: "sparse", source: `aevalsrc=sin(2*PI*440*t)*between(t\,0.45\,0.55):d=1:s=44100`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			renderLowComplexityAudio(t, ffmpeg, ffprobe, test.source)
+		})
+	}
+}
+
+func renderLowComplexityAudio(t *testing.T, ffmpeg, ffprobe, source string) {
+	t.Helper()
+	dir := t.TempDir()
+	input := filepath.Join(dir, "input.mp3")
+	cover := filepath.Join(dir, "cover.png")
+	assPath := filepath.Join(dir, "subtitles.ass")
+	output := filepath.Join(dir, "output.mp4")
+	runExternal(t, ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", source, "-ac", "2", "-q:a", "4", input)
+	runExternal(t, ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x8844cc:s=600x600:d=1", "-frames:v", "1", cover)
+	fontDir, family, err := assets.PrepareFont(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assFile, err := os.Create(assPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = subtitles.WriteASS(assFile, subtitles.Document{
+		Duration: time.Second, FontFamily: family, Accent: "#FFD84D",
+		Phrases: []subtitles.Phrase{{Text: "test", Words: []transcribe.Word{{Text: "test", End: time.Second}}}},
+	})
+	closeErr := assFile.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	runner := tools.ExecRunner{Diagnostic: io.Discard}
+	if err := media.Render(context.Background(), runner, media.RenderRequest{
+		FFmpeg: ffmpeg, Input: input, Cover: cover, ASS: assPath, FontDir: fontDir,
+		WorkDir: dir, Output: output, Accent: "#FFD84D", Selection: media.Selection{Duration: time.Second},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := media.VerifyOutput(context.Background(), runner, ffprobe, output, time.Second); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestASSLiteralPunctuationAndBackslashesRenderOnOneLine(t *testing.T) {
 	ffmpeg, err := exec.LookPath("ffmpeg")
 	if err != nil {
