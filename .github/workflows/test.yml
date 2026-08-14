@@ -1,0 +1,32 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Install FFmpeg (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Install FFmpeg with libass (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew tap homebrew-ffmpeg/ffmpeg
+          brew install ffmpeg-full
+          echo "/usr/local/opt/ffmpeg-full/bin" >> "$GITHUB_PATH"
+          echo "/opt/homebrew/opt/ffmpeg-full/bin" >> "$GITHUB_PATH"
+      - run: go test ./... -race
+      - run: go vet ./...

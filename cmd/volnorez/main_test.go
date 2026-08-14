@@ -24,6 +24,14 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(stdout.String(), "volnorez INPUT") {
 		t.Fatalf("stdout = %s", stdout.String())
 	}
+	for _, flagName := range []string{
+		"--model", "--cover", "--output", "--language", "--start", "--duration",
+		"--accent", "--title", "--font", "--whisper-bin", "--force", "--verbose",
+	} {
+		if !strings.Contains(stdout.String(), flagName) {
+			t.Errorf("help missing %s", flagName)
+		}
+	}
 }
 
 func TestRunInvalidArgumentsUseExitTwo(t *testing.T) {
