@@ -328,6 +328,106 @@ func TestRunCancellationHasExitCode130(t *testing.T) {
 	assertCleaned(t, workspaceParent, output)
 }
 
+func TestRunLateCancellationCleansTemporaryFilesAndPreservesForcedOutput(t *testing.T) {
+	root := t.TempDir()
+	workspaceParent := filepath.Join(root, "workspaces")
+	if err := os.Mkdir(workspaceParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(root, "clip.mp4")
+	if err := os.WriteFile(output, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	calls := []string{}
+	runner := &pipelineRunner{t: t, calls: &calls}
+	deps := successfulDependencies(t, runner, workspaceParent, &calls)
+	ctx, cancel := context.WithCancel(context.Background())
+	deps.Verify = func(ctx context.Context, _ tools.Runner, _ string, tempOutput string, _ time.Duration) error {
+		assertFileContents(t, tempOutput, "rendered")
+		entries, err := os.ReadDir(workspaceParent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 1 {
+			t.Fatalf("workspace count during verification = %d, want 1", len(entries))
+		}
+		cancel()
+		return ctx.Err()
+	}
+
+	_, err := Run(ctx, cli.Config{
+		Input: "input.mp3", Model: "model.bin", Output: output, Language: "auto", Accent: "#112233", Force: true,
+	}, deps, &bytes.Buffer{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context.Canceled", err)
+	}
+	if Code(err) != 130 {
+		t.Fatalf("Code(error) = %d, want 130", Code(err))
+	}
+	assertFileContents(t, output, "old")
+	assertCleaned(t, workspaceParent, output)
+}
+
+func TestRunWorkspaceCreationFailure(t *testing.T) {
+	root := t.TempDir()
+	missingParent := filepath.Join(root, "missing", "workspaces")
+	calls := []string{}
+	runner := &pipelineRunner{t: t, calls: &calls}
+	deps := successfulDependencies(t, runner, missingParent, &calls)
+	output := filepath.Join(root, "clip.mp4")
+
+	_, err := Run(context.Background(), cli.Config{
+		Input: "input.mp3", Model: "model.bin", Output: output, Language: "auto", Accent: "#112233",
+	}, deps, &bytes.Buffer{})
+	if Code(err) != 5 {
+		t.Fatalf("Code(error) = %d, want 5 (%v)", Code(err), err)
+	}
+	var pipelineErr *Error
+	if !errors.As(err, &pipelineErr) || pipelineErr.Op != "creating workspace" {
+		t.Fatalf("error = %v, want pipeline Error op %q", err, "creating workspace")
+	}
+	if _, statErr := os.Stat(missingParent); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("failed workspace creation left path behind: %v", statErr)
+	}
+	if _, statErr := os.Stat(output); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("failed workspace creation changed output: %v", statErr)
+	}
+}
+
+func TestRunSiblingTemporaryOutputCreationFailure(t *testing.T) {
+	root := t.TempDir()
+	workspaceParent := filepath.Join(root, "workspaces")
+	if err := os.Mkdir(workspaceParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(root, "clip.mp4")
+	calls := []string{}
+	runner := &pipelineRunner{t: t, calls: &calls}
+	deps := successfulDependencies(t, runner, workspaceParent, &calls)
+	deps.CreateTemp = func(dir, pattern string) (*os.File, error) {
+		if dir != root || pattern != ".clip.mp4.volnorez-*.tmp.mp4" {
+			t.Errorf("CreateTemp(%q, %q), want sibling output pattern", dir, pattern)
+		}
+		return nil, errors.New("create temp failed")
+	}
+	deps.Render = func(context.Context, tools.Runner, media.RenderRequest) error {
+		t.Fatal("render called after sibling temporary-output creation failure")
+		return nil
+	}
+
+	_, err := Run(context.Background(), cli.Config{
+		Input: "input.mp3", Model: "model.bin", Output: output, Language: "auto", Accent: "#112233",
+	}, deps, &bytes.Buffer{})
+	if Code(err) != 5 {
+		t.Fatalf("Code(error) = %d, want 5 (%v)", Code(err), err)
+	}
+	var pipelineErr *Error
+	if !errors.As(err, &pipelineErr) || pipelineErr.Op != "creating output" {
+		t.Fatalf("error = %v, want pipeline Error op %q", err, "creating output")
+	}
+	assertCleaned(t, workspaceParent, output)
+}
+
 func TestRunForcePreservesOldOutputOnFailureAndReplacesAfterVerification(t *testing.T) {
 	for _, stage := range []string{"render", "verify"} {
 		t.Run("failure_"+stage, func(t *testing.T) {
@@ -459,6 +559,93 @@ func TestRunWithoutForceNeverClobbersOutput(t *testing.T) {
 	})
 }
 
+func TestRunLinkFailurePreservesDestinationAndCleansTemporaryFiles(t *testing.T) {
+	root := t.TempDir()
+	workspaceParent := filepath.Join(root, "workspaces")
+	if err := os.Mkdir(workspaceParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(root, "clip.mp4")
+	calls := []string{}
+	runner := &pipelineRunner{t: t, calls: &calls}
+	deps := successfulDependencies(t, runner, workspaceParent, &calls)
+	verified := false
+	deps.Verify = func(context.Context, tools.Runner, string, string, time.Duration) error {
+		verified = true
+		return nil
+	}
+	deps.Link = func(tempOutput, destination string) error {
+		if !verified {
+			t.Error("Link called before verification")
+		}
+		if destination != output {
+			t.Errorf("Link destination = %q, want %q", destination, output)
+		}
+		assertFileContents(t, tempOutput, "rendered")
+		if err := os.WriteFile(destination, []byte("racer"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return fmt.Errorf("link failed: %w", os.ErrExist)
+	}
+
+	_, err := Run(context.Background(), cli.Config{
+		Input: "input.mp3", Model: "model.bin", Output: output, Language: "auto", Accent: "#112233",
+	}, deps, &bytes.Buffer{})
+	if Code(err) != 2 {
+		t.Fatalf("Code(error) = %d, want 2 (%v)", Code(err), err)
+	}
+	var pipelineErr *Error
+	if !errors.As(err, &pipelineErr) || pipelineErr.Op != "publishing output" {
+		t.Fatalf("error = %v, want pipeline Error op %q", err, "publishing output")
+	}
+	assertFileContents(t, output, "racer")
+	assertCleaned(t, workspaceParent, output)
+}
+
+func TestRunRenameFailurePreservesDestinationAndCleansTemporaryFiles(t *testing.T) {
+	root := t.TempDir()
+	workspaceParent := filepath.Join(root, "workspaces")
+	if err := os.Mkdir(workspaceParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(root, "clip.mp4")
+	if err := os.WriteFile(output, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	calls := []string{}
+	runner := &pipelineRunner{t: t, calls: &calls}
+	deps := successfulDependencies(t, runner, workspaceParent, &calls)
+	verified := false
+	deps.Verify = func(context.Context, tools.Runner, string, string, time.Duration) error {
+		verified = true
+		return nil
+	}
+	deps.Rename = func(tempOutput, destination string) error {
+		if !verified {
+			t.Error("Rename called before verification")
+		}
+		if destination != output {
+			t.Errorf("Rename destination = %q, want %q", destination, output)
+		}
+		assertFileContents(t, tempOutput, "rendered")
+		assertFileContents(t, destination, "old")
+		return errors.New("rename failed")
+	}
+
+	_, err := Run(context.Background(), cli.Config{
+		Input: "input.mp3", Model: "model.bin", Output: output, Language: "auto", Accent: "#112233", Force: true,
+	}, deps, &bytes.Buffer{})
+	if Code(err) != 5 {
+		t.Fatalf("Code(error) = %d, want 5 (%v)", Code(err), err)
+	}
+	var pipelineErr *Error
+	if !errors.As(err, &pipelineErr) || pipelineErr.Op != "publishing output" {
+		t.Fatalf("error = %v, want pipeline Error op %q", err, "publishing output")
+	}
+	assertFileContents(t, output, "old")
+	assertCleaned(t, workspaceParent, output)
+}
+
 func TestCodeUsesStableExitCodes(t *testing.T) {
 	if Code(nil) != 0 {
 		t.Fatalf("Code(nil) = %d, want 0", Code(nil))
@@ -498,6 +685,9 @@ func successfulDependencies(t *testing.T, runner *pipelineRunner, workspaceParen
 			*calls = append(*calls, "verify")
 			return nil
 		},
+		CreateTemp: os.CreateTemp,
+		Link:       os.Link,
+		Rename:     os.Rename,
 		TempParent: workspaceParent,
 	}
 }

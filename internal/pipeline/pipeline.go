@@ -24,6 +24,9 @@ type Dependencies struct {
 	Transcribe func(context.Context, tools.Runner, transcribe.Request) ([]transcribe.Word, error)
 	Render     func(context.Context, tools.Runner, media.RenderRequest) error
 	Verify     func(context.Context, tools.Runner, string, string, time.Duration) error
+	CreateTemp func(string, string) (*os.File, error)
+	Link       func(string, string) error
+	Rename     func(string, string) error
 	TempParent string
 }
 
@@ -35,10 +38,26 @@ func DefaultDependencies(r tools.Runner) Dependencies {
 		Transcribe: transcribe.Run,
 		Render:     media.Render,
 		Verify:     media.VerifyOutput,
+		CreateTemp: os.CreateTemp,
+		Link:       os.Link,
+		Rename:     os.Rename,
 	}
 }
 
 func Run(ctx context.Context, cfg cli.Config, deps Dependencies, progress io.Writer) (string, error) {
+	createTemp := deps.CreateTemp
+	if createTemp == nil {
+		createTemp = os.CreateTemp
+	}
+	link := deps.Link
+	if link == nil {
+		link = os.Link
+	}
+	rename := deps.Rename
+	if rename == nil {
+		rename = os.Rename
+	}
+
 	fmt.Fprintln(progress, "checking input")
 	paths, err := deps.Preflight(ctx, deps.Runner, cfg.WhisperBin)
 	if err != nil {
@@ -107,7 +126,7 @@ func Run(ctx context.Context, cfg cli.Config, deps Dependencies, progress io.Wri
 			return "", &Error{Code: 5, Op: "checking output", Err: err}
 		}
 	}
-	tempFile, err := os.CreateTemp(filepath.Dir(cfg.Output), "."+filepath.Base(cfg.Output)+".volnorez-*.tmp.mp4")
+	tempFile, err := createTemp(filepath.Dir(cfg.Output), "."+filepath.Base(cfg.Output)+".volnorez-*.tmp.mp4")
 	if err != nil {
 		return "", &Error{Code: 5, Op: "creating output", Err: err}
 	}
@@ -137,11 +156,11 @@ func Run(ctx context.Context, cfg cli.Config, deps Dependencies, progress io.Wri
 		}
 	}
 	if cfg.Force {
-		if err := os.Rename(tempOutput, cfg.Output); err != nil {
+		if err := rename(tempOutput, cfg.Output); err != nil {
 			return "", &Error{Code: 5, Op: "publishing output", Err: err}
 		}
 	} else {
-		if err := os.Link(tempOutput, cfg.Output); err != nil {
+		if err := link(tempOutput, cfg.Output); err != nil {
 			code := 5
 			if errors.Is(err, os.ErrExist) {
 				code = 2
