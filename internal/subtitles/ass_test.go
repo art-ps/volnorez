@@ -62,6 +62,16 @@ func TestWriteASSConvertsAccentRGBToBGR(t *testing.T) {
 	}
 }
 
+func TestWriteASSUsesDefaultAccentWhenEmpty(t *testing.T) {
+	var out bytes.Buffer
+	if err := WriteASS(&out, Document{Duration: time.Second, FontFamily: "Noto Sans"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `&H4DD8FF&`) {
+		t.Fatalf("default accent not converted:\n%s", out.String())
+	}
+}
+
 func TestWriteASSOmitsTitleEventWhenTitleEmpty(t *testing.T) {
 	var out bytes.Buffer
 	if err := WriteASS(&out, Document{Duration: time.Second, FontFamily: "Noto Sans", Accent: "#010203"}); err != nil {

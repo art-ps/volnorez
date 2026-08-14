@@ -10,6 +10,7 @@ import (
 const (
 	maxWords      = 7
 	maxRunes      = 42
+	maxLineRunes  = 24
 	maxPhraseSpan = 3500 * time.Millisecond
 )
 
@@ -59,6 +60,10 @@ func wordsText(words []transcribe.Word) string {
 }
 
 func balancedText(words []transcribe.Word) string {
+	if len(words) == 2 && len([]rune(wordsText(words))) > maxLineRunes &&
+		len([]rune(words[0].Text)) <= maxLineRunes && len([]rune(words[1].Text)) <= maxLineRunes {
+		return words[0].Text + `\N` + words[1].Text
+	}
 	if len(words) < 3 {
 		return wordsText(words)
 	}

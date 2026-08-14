@@ -71,6 +71,17 @@ func TestGroupBalancesTwoLines(t *testing.T) {
 	}
 }
 
+func TestGroupSplitsLongTwoWordPhraseAcrossLines(t *testing.T) {
+	words := timedWords("абвгдеёжзийкл мнопрстуфхцчш", 400*time.Millisecond)
+	got := Group(words)
+	if len(got) != 1 || strings.Count(got[0].Text, `\N`) != 1 {
+		t.Fatalf("groups = %#v", got)
+	}
+	if got[0].Text != `абвгдеёжзийкл\Nмнопрстуфхцчш` {
+		t.Fatalf("text = %q", got[0].Text)
+	}
+}
+
 func timedWords(text string, step time.Duration) []transcribe.Word {
 	parts := strings.Fields(text)
 	words := make([]transcribe.Word, len(parts))

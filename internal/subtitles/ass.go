@@ -17,7 +17,12 @@ type Document struct {
 	Phrases    []Phrase
 }
 
+const defaultAccent = "#FFD84D"
+
 func WriteASS(w io.Writer, document Document) error {
+	if document.Accent == "" {
+		document.Accent = defaultAccent
+	}
 	accent, err := assColor(document.Accent)
 	if err != nil {
 		return err
