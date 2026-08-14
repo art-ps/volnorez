@@ -31,7 +31,7 @@ func WriteASS(w io.Writer, document Document) error {
 		return err
 	}
 	if document.Title != "" {
-		if err := writeEvent(w, 0, 0, document.Duration, "Title", escapeASS(document.Title)); err != nil {
+		if err := writeEvent(w, 0, 0, document.Duration, "Title", escapeEventText(document.Title)); err != nil {
 			return err
 		}
 	}
@@ -66,7 +66,7 @@ Style: Subtitle,%s,64,&H00FFFFFF,%s,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1
 
 [Events]
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
-`, escapeASS(fontFamily), escapeASS(fontFamily), accent)
+`, escapeStyleField(fontFamily), escapeStyleField(fontFamily), accent)
 }
 
 func writeEvent(w io.Writer, layer int, start, end time.Duration, style, text string) error {
@@ -99,7 +99,7 @@ func highlightText(phrase Phrase, active int, accent string) string {
 			text.WriteString(accent)
 			text.WriteString(`}`)
 		}
-		text.WriteString(escapeASS(word.Text))
+		text.WriteString(escapeEventText(word.Text))
 		if i == active && i+1 < len(phrase.Words) {
 			text.WriteString(`{\c&HFFFFFF&}`)
 		}
@@ -131,10 +131,17 @@ func assTime(duration time.Duration) string {
 	return fmt.Sprintf("%d:%02d:%02d.%02d", hours, minutes, seconds, centiseconds%100)
 }
 
-func escapeASS(text string) string {
-	text = strings.ReplaceAll(text, "\\", `\\`)
+func escapeEventText(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	// libass treats \N, \n, and \h as controls. A zero-width word joiner
+	// preserves a user's literal backslash while preventing that tokenization.
+	text = strings.ReplaceAll(text, "\\", "\\\u2060")
 	text = strings.ReplaceAll(text, "{", `\{`)
 	text = strings.ReplaceAll(text, "}", `\}`)
-	text = strings.ReplaceAll(text, ",", `\,`)
 	return strings.ReplaceAll(text, "\n", `\N`)
+}
+
+func escapeStyleField(text string) string {
+	return strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ", ",", " ").Replace(text)
 }

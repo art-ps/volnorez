@@ -100,6 +100,9 @@ func ParseFullJSON(data []byte, duration time.Duration) ([]Word, error) {
 		previousEnd = end
 
 		text := strings.TrimSpace(entry.Text)
+		if text == "" {
+			continue
+		}
 		if punctuationOnly(text) {
 			if len(words) == 0 {
 				return nil, fmt.Errorf("transcription segment %d has punctuation without a preceding word", i)
@@ -117,9 +120,6 @@ func ParseFullJSON(data []byte, duration time.Duration) ([]Word, error) {
 }
 
 func punctuationOnly(text string) bool {
-	if text == "" {
-		return true
-	}
 	for _, r := range text {
 		if !unicode.IsPunct(r) {
 			return false

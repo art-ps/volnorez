@@ -368,6 +368,57 @@ func TestRunLateCancellationCleansTemporaryFilesAndPreservesForcedOutput(t *test
 	assertCleaned(t, workspaceParent, output)
 }
 
+func TestRunDoesNotPublishWhenVerifyCancelsThenReturnsNil(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprintf("force=%t", force), func(t *testing.T) {
+			root := t.TempDir()
+			workspaceParent := filepath.Join(root, "workspaces")
+			if err := os.Mkdir(workspaceParent, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			output := filepath.Join(root, "clip.mp4")
+			if force {
+				if err := os.WriteFile(output, []byte("old"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			calls := []string{}
+			runner := &pipelineRunner{t: t, calls: &calls}
+			deps := successfulDependencies(t, runner, workspaceParent, &calls)
+			ctx, cancel := context.WithCancel(context.Background())
+			deps.Verify = func(context.Context, tools.Runner, string, string, time.Duration) error {
+				cancel()
+				return nil
+			}
+			deps.Link = func(string, string) error {
+				t.Fatal("Link called after verification canceled the context")
+				return nil
+			}
+			deps.Rename = func(string, string) error {
+				t.Fatal("Rename called after verification canceled the context")
+				return nil
+			}
+
+			_, err := Run(ctx, cli.Config{
+				Input: "input.mp3", Model: "model.bin", Output: output, Language: "auto", Accent: "#112233", Force: force,
+			}, deps, &bytes.Buffer{})
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("Run() error = %v, want context.Canceled", err)
+			}
+			if Code(err) != 130 {
+				t.Fatalf("Code(error) = %d, want 130", Code(err))
+			}
+			if force {
+				assertFileContents(t, output, "old")
+			} else if _, statErr := os.Stat(output); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("destination exists after cancellation: %v", statErr)
+			}
+			assertCleaned(t, workspaceParent, output)
+		})
+	}
+}
+
 func TestRunWorkspaceCreationFailure(t *testing.T) {
 	root := t.TempDir()
 	missingParent := filepath.Join(root, "missing", "workspaces")

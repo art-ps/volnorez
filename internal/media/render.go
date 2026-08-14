@@ -2,8 +2,10 @@ package media
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -60,7 +62,8 @@ func Render(ctx context.Context, r tools.Runner, req RenderRequest) error {
 
 type renderProbeOutput struct {
 	Format struct {
-		Duration string `json:"duration"`
+		FormatName string `json:"format_name"`
+		Duration   string `json:"duration"`
 	} `json:"format"`
 	Streams []struct {
 		CodecType   string `json:"codec_type"`
@@ -69,6 +72,8 @@ type renderProbeOutput struct {
 		Height      int    `json:"height"`
 		PixelFormat string `json:"pix_fmt"`
 		FrameRate   string `json:"avg_frame_rate"`
+		Channels    int    `json:"channels"`
+		BitRate     string `json:"bit_rate"`
 	} `json:"streams"`
 }
 
@@ -77,7 +82,7 @@ func VerifyOutput(ctx context.Context, r tools.Runner, ffprobe, output string, e
 		Name: ffprobe,
 		Args: []string{
 			"-v", "error",
-			"-show_entries", "format=duration:stream=codec_type,codec_name,width,height,pix_fmt,avg_frame_rate",
+			"-show_entries", "format=format_name,duration:stream=codec_type,codec_name,width,height,pix_fmt,avg_frame_rate,channels,bit_rate",
 			"-of", "json",
 			output,
 		},
@@ -89,6 +94,9 @@ func VerifyOutput(ctx context.Context, r tools.Runner, ffprobe, output string, e
 	var probe renderProbeOutput
 	if err := json.Unmarshal(result.Stdout, &probe); err != nil {
 		return fmt.Errorf("parse output probe: %w", err)
+	}
+	if !hasFormat(probe.Format.FormatName, "mp4") {
+		return fmt.Errorf("output container %q is not MP4", probe.Format.FormatName)
 	}
 
 	durationSeconds, err := strconv.ParseFloat(probe.Format.Duration, 64)
@@ -118,6 +126,24 @@ func VerifyOutput(ctx context.Context, r tools.Runner, ffprobe, output string, e
 			if stream.CodecName != "aac" {
 				return fmt.Errorf("output audio stream codec is %q, want AAC", stream.CodecName)
 			}
+			if stream.Channels != 2 {
+				return fmt.Errorf("output audio stream has %d channels, want stereo", stream.Channels)
+			}
+			bitRate, err := strconv.ParseInt(stream.BitRate, 10, 64)
+			if err != nil {
+				return fmt.Errorf("parse output audio bitrate %q: %w", stream.BitRate, err)
+			}
+			const targetBitRate int64 = 192000
+			// ffprobe reports encoded average, which can be well below the requested
+			// AAC target for speech and for very short streams. Keep this a sanity
+			// band; BuildRenderCommand separately pins the encoder target to 192k.
+			minimum, maximum := targetBitRate*2/5, targetBitRate*5/4
+			if expected < 2*time.Second {
+				minimum, maximum = targetBitRate/4, targetBitRate*3/2
+			}
+			if bitRate < minimum || bitRate > maximum {
+				return fmt.Errorf("output audio bitrate %d is outside %d..%d", bitRate, minimum, maximum)
+			}
 		}
 	}
 	if videoCount != 1 {
@@ -125,6 +151,77 @@ func VerifyOutput(ctx context.Context, r tools.Runner, ffprobe, output string, e
 	}
 	if audioCount != 1 {
 		return fmt.Errorf("output has %d audio streams, want 1", audioCount)
+	}
+	if err := verifyFaststart(output); err != nil {
+		return err
+	}
+	return nil
+}
+
+func hasFormat(formats, want string) bool {
+	for _, format := range strings.Split(formats, ",") {
+		if format == want {
+			return true
+		}
+	}
+	return false
+}
+
+func verifyFaststart(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("inspect MP4 boxes: %w", err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect MP4 size: %w", err)
+	}
+
+	var moovOffset, mdatOffset int64 = -1, -1
+	for offset := int64(0); offset < info.Size(); {
+		remaining := info.Size() - offset
+		if remaining < 8 {
+			return fmt.Errorf("inspect MP4 boxes: truncated header at offset %d", offset)
+		}
+		var header [16]byte
+		if _, err := file.ReadAt(header[:8], offset); err != nil {
+			return fmt.Errorf("inspect MP4 box at offset %d: %w", offset, err)
+		}
+		headerSize := uint64(8)
+		boxSize := uint64(binary.BigEndian.Uint32(header[:4]))
+		if boxSize == 1 {
+			if remaining < 16 {
+				return fmt.Errorf("inspect MP4 boxes: truncated extended header at offset %d", offset)
+			}
+			if _, err := file.ReadAt(header[8:16], offset+8); err != nil {
+				return fmt.Errorf("inspect MP4 extended box at offset %d: %w", offset, err)
+			}
+			headerSize = 16
+			boxSize = binary.BigEndian.Uint64(header[8:16])
+		} else if boxSize == 0 {
+			boxSize = uint64(remaining)
+		}
+		if boxSize < headerSize || boxSize > uint64(remaining) {
+			return fmt.Errorf("inspect MP4 boxes: invalid box size %d at offset %d", boxSize, offset)
+		}
+		switch string(header[4:8]) {
+		case "moov":
+			if moovOffset < 0 {
+				moovOffset = offset
+			}
+		case "mdat":
+			if mdatOffset < 0 {
+				mdatOffset = offset
+			}
+		}
+		offset += int64(boxSize)
+	}
+	if moovOffset < 0 || mdatOffset < 0 {
+		return fmt.Errorf("output MP4 is missing moov or mdat box")
+	}
+	if moovOffset > mdatOffset {
+		return fmt.Errorf("output MP4 is not faststart: moov follows mdat")
 	}
 	return nil
 }

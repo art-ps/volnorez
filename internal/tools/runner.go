@@ -3,9 +3,9 @@ package tools
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -31,6 +31,20 @@ type ExecRunner struct {
 	Diagnostic io.Writer
 }
 
+type CommandError struct {
+	Command        Command
+	Err            error
+	Stdout, Stderr []byte
+}
+
+func (e *CommandError) Error() string {
+	return e.Command.Name + ": " + strings.Join(strings.Fields(e.Err.Error()), " ")
+}
+
+func (e *CommandError) Unwrap() error {
+	return e.Err
+}
+
 func (ExecRunner) LookPath(name string) (string, error) {
 	return exec.LookPath(name)
 }
@@ -45,15 +59,20 @@ func (r ExecRunner) Run(ctx context.Context, command Command) (Result, error) {
 	var stdoutBuffer, stderrBuffer bytes.Buffer
 	stdout := io.Writer(&stdoutBuffer)
 	stderr := io.Writer(&stderrBuffer)
+	var diagnostic *diagnosticWriter
 	if r.Verbose && r.Diagnostic != nil {
-		diagnostic := lockedWriter{Writer: r.Diagnostic}
-		stdout = io.MultiWriter(&stdoutBuffer, &diagnostic)
-		stderr = io.MultiWriter(&stderrBuffer, &diagnostic)
+		diagnostic = &diagnosticWriter{Writer: r.Diagnostic}
+		_, _ = io.WriteString(diagnostic, formatCommand(command)+"\n")
+		stdout = io.MultiWriter(&stdoutBuffer, diagnostic)
+		stderr = io.MultiWriter(&stderrBuffer, diagnostic)
 	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 
 	err := cmd.Run()
+	if diagnostic != nil {
+		diagnostic.ensureNewline()
+	}
 	result.Stdout = stdoutBuffer.Bytes()
 	result.Stderr = stderrBuffer.Bytes()
 	if ctx.Err() != nil {
@@ -62,19 +81,45 @@ func (r ExecRunner) Run(ctx context.Context, command Command) (Result, error) {
 	if err == nil {
 		return result, nil
 	}
-	if _, ok := err.(*exec.ExitError); ok {
-		return result, fmt.Errorf("%s: %w: %s", command.Name, err, strings.TrimSpace(string(result.Stderr)))
+	return result, &CommandError{
+		Command: command, Err: err,
+		Stdout: append([]byte(nil), result.Stdout...), Stderr: append([]byte(nil), result.Stderr...),
 	}
-	return result, fmt.Errorf("run %s: %w", command.Name, err)
 }
 
-type lockedWriter struct {
+func formatCommand(command Command) string {
+	quoted := make([]string, 0, len(command.Args)+1)
+	quoted = append(quoted, strconv.Quote(command.Name))
+	for _, arg := range command.Args {
+		quoted = append(quoted, strconv.Quote(arg))
+	}
+	return "+ " + strings.Join(quoted, " ")
+}
+
+type diagnosticWriter struct {
 	io.Writer
-	mu sync.Mutex
+	mu      sync.Mutex
+	last    byte
+	written bool
 }
 
-func (w *lockedWriter) Write(p []byte) (int, error) {
+func (w *diagnosticWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.Writer.Write(p)
+	n, err := w.Writer.Write(p)
+	if n > 0 {
+		w.last = p[n-1]
+		w.written = true
+	}
+	return n, err
+}
+
+func (w *diagnosticWriter) ensureNewline() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.written || w.last == '\n' {
+		return
+	}
+	_, _ = io.WriteString(w.Writer, "\n")
+	w.last = '\n'
 }

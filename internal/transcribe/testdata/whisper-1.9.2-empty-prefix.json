@@ -1,0 +1,29 @@
+{
+  "systeminfo": "WHISPER : COREML = 0 | OPENVINO = 0 | MTL : EMBED_LIBRARY = 1 | CPU : NEON = 1 | ",
+  "model": {"type": "medium", "multilingual": true},
+  "params": {"language": "en", "translate": false},
+  "result": {"language": "en"},
+  "transcription": [
+    {
+      "timestamps": {"from": "00:00:00,000", "to": "00:00:00,320"},
+      "offsets": {"from": 0, "to": 320},
+      "text": "",
+      "tokens": [{"text": "[_BEG_]", "offsets": {"from": 0, "to": 0}, "id": 50364}]
+    },
+    {
+      "timestamps": {"from": "00:00:00,320", "to": "00:00:00,330"},
+      "offsets": {"from": 320, "to": 330},
+      "text": " And"
+    },
+    {
+      "timestamps": {"from": "00:00:00,330", "to": "00:00:00,680"},
+      "offsets": {"from": 330, "to": 680},
+      "text": " so"
+    },
+    {
+      "timestamps": {"from": "00:00:00,680", "to": "00:00:00,740"},
+      "offsets": {"from": 680, "to": 740},
+      "text": ","
+    }
+  ]
+}

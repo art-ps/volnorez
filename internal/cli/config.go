@@ -23,6 +23,22 @@ type Config struct {
 	HasDuration, Force, Verbose           bool
 }
 
+type Error struct {
+	ExitCode int
+	Err      error
+}
+
+func (e *Error) Error() string { return e.Err.Error() }
+func (e *Error) Unwrap() error { return e.Err }
+
+func Code(err error) int {
+	var classified *Error
+	if errors.As(err, &classified) {
+		return classified.ExitCode
+	}
+	return 2
+}
+
 type options struct {
 	model, cover, output, language  string
 	accent, title, font, whisperBin string
@@ -96,14 +112,14 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 		values.model = getenv("WHISPER_MODEL")
 	}
 	if values.model == "" {
-		return Config{}, fmt.Errorf("Whisper model is required; use --model or WHISPER_MODEL")
+		return Config{}, resourceError(fmt.Errorf("Whisper model is required; use --model or WHISPER_MODEL"))
 	}
 	model, err := absolutePath(values.model)
 	if err != nil {
 		return Config{}, err
 	}
 	if err := requireExistingPath("model", model); err != nil {
-		return Config{}, err
+		return Config{}, resourceError(err)
 	}
 
 	output := values.output
@@ -160,8 +176,11 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 		if err != nil {
 			return Config{}, err
 		}
+		if !hasExtension(cfg.Cover, ".jpg", ".jpeg", ".png") {
+			return Config{}, fmt.Errorf("cover must be a JPEG or PNG file")
+		}
 		if err := requireExistingPath("cover", cfg.Cover); err != nil {
-			return Config{}, err
+			return Config{}, resourceError(err)
 		}
 	}
 	if values.font != "" {
@@ -169,8 +188,11 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 		if err != nil {
 			return Config{}, err
 		}
+		if !hasExtension(cfg.Font, ".ttf", ".otf") {
+			return Config{}, fmt.Errorf("font must be a TTF or OTF file")
+		}
 		if err := requireExistingPath("font", cfg.Font); err != nil {
-			return Config{}, err
+			return Config{}, resourceError(err)
 		}
 	}
 	if values.whisperBin != "" {
@@ -179,10 +201,24 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 			return Config{}, err
 		}
 		if err := requireExistingPath("whisper binary", cfg.WhisperBin); err != nil {
-			return Config{}, err
+			return Config{}, resourceError(err)
 		}
 	}
 	return cfg, nil
+}
+
+func resourceError(err error) error {
+	return &Error{ExitCode: 3, Err: err}
+}
+
+func hasExtension(path string, allowed ...string) bool {
+	extension := filepath.Ext(path)
+	for _, candidate := range allowed {
+		if strings.EqualFold(extension, candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func absolutePath(path string) (string, error) {

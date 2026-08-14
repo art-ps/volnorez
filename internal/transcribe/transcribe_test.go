@@ -43,6 +43,24 @@ func TestParseFullJSONMergesStandalonePunctuation(t *testing.T) {
 	}
 }
 
+func TestParseFullJSONAcceptsWhisper192EmptyPrefix(t *testing.T) {
+	b, err := os.ReadFile("testdata/whisper-1.9.2-empty-prefix.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseFullJSON(b, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Word{
+		{Text: "And", Start: 320 * time.Millisecond, End: 330 * time.Millisecond},
+		{Text: "so,", Start: 330 * time.Millisecond, End: 740 * time.Millisecond},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v; want %#v", got, want)
+	}
+}
+
 func TestRunInvokesWhisperAndParsesOutput(t *testing.T) {
 	dir := t.TempDir()
 	prefix := filepath.Join(dir, "timed")

@@ -47,7 +47,7 @@ func runWith(args []string, getenv func(string) string, stdout, stderr io.Writer
 	}
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "volnorez:", err)
-		return 2
+		return cli.Code(err)
 	}
 
 	ctx, stop := deps.context()

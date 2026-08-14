@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -39,6 +40,76 @@ func TestRunInvalidArgumentsUseExitTwo(t *testing.T) {
 	code := run(nil, os.Getenv, &stdout, &stderr)
 	if code != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "input") {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestRunClassifiesParseErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		want int
+		args func(*testing.T, string, string, string) []string
+	}{
+		{name: "missing input", want: 2, args: func(_ *testing.T, dir, _, model string) []string {
+			return []string{filepath.Join(dir, "missing.mp3"), "--model", model}
+		}},
+		{name: "missing model option", want: 3, args: func(_ *testing.T, _, input, _ string) []string {
+			return []string{input}
+		}},
+		{name: "missing model file", want: 3, args: func(_ *testing.T, dir, input, _ string) []string {
+			return []string{input, "--model", filepath.Join(dir, "missing.bin")}
+		}},
+		{name: "invalid cover extension", want: 2, args: func(t *testing.T, dir, input, model string) []string {
+			cover := filepath.Join(dir, "cover.gif")
+			if err := os.WriteFile(cover, []byte("gif"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return []string{input, "--model", model, "--cover", cover}
+		}},
+		{name: "missing valid cover", want: 3, args: func(_ *testing.T, dir, input, model string) []string {
+			return []string{input, "--model", model, "--cover", filepath.Join(dir, "missing.jpg")}
+		}},
+		{name: "invalid font extension", want: 2, args: func(t *testing.T, dir, input, model string) []string {
+			font := filepath.Join(dir, "font.woff")
+			if err := os.WriteFile(font, []byte("font"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return []string{input, "--model", model, "--font", font}
+		}},
+		{name: "missing valid font", want: 3, args: func(_ *testing.T, dir, input, model string) []string {
+			return []string{input, "--model", model, "--font", filepath.Join(dir, "missing.otf")}
+		}},
+		{name: "missing explicit whisper", want: 3, args: func(_ *testing.T, dir, input, model string) []string {
+			return []string{input, "--model", model, "--whisper-bin", filepath.Join(dir, "missing-whisper")}
+		}},
+		{name: "output collision", want: 2, args: func(t *testing.T, dir, input, model string) []string {
+			output := filepath.Join(dir, "existing.mp4")
+			if err := os.WriteFile(output, []byte("old"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return []string{input, "--model", model, "--output", output}
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			input := filepath.Join(dir, "episode.mp3")
+			model := filepath.Join(dir, "model.bin")
+			if err := os.WriteFile(input, []byte("mp3"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(model, []byte("model"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var stdout, stderr bytes.Buffer
+			code := run(test.args(t, dir, input, model), func(string) string { return "" }, &stdout, &stderr)
+			if code != test.want {
+				t.Fatalf("code = %d, want %d; stderr = %q", code, test.want, stderr.String())
+			}
+			if stdout.Len() != 0 || strings.Count(stderr.String(), "\n") != 1 {
+				t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
+			}
+		})
 	}
 }
 
@@ -97,10 +168,13 @@ func TestRunWithVerboseStreamsChildDiagnosticsToStderr(t *testing.T) {
 			return pipeline.Dependencies{Runner: r}
 		},
 		pipeline: func(ctx context.Context, _ cli.Config, deps pipeline.Dependencies, _ io.Writer) (string, error) {
-			if _, err := deps.Runner.Run(ctx, tools.Command{Name: "sh", Args: []string{"-c", "printf diagnostic >&2"}}); err != nil {
-				return "", err
+			if _, err := deps.Runner.Run(ctx, tools.Command{
+				Name: os.Args[0],
+				Args: []string{"-test.run=TestMainHelperProcess", "--", "emit-no-newline", "exit"},
+			}); err != nil {
+				return "", fmt.Errorf("render failed: %w", err)
 			}
-			return "", errors.New("render failed")
+			return "", nil
 		},
 	})
 	if code != 5 {
@@ -109,8 +183,35 @@ func TestRunWithVerboseStreamsChildDiagnosticsToStderr(t *testing.T) {
 	if stdout.Len() != 0 {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
-	if stderr.String() != "diagnosticvolnorez: render failed\n" {
-		t.Fatalf("stderr = %q", stderr.String())
+	got := stderr.String()
+	if strings.Count(got, "diagnostic without newline") != 1 {
+		t.Fatalf("diagnostics duplicated: %q", got)
+	}
+	if !strings.Contains(got, `+ "`+os.Args[0]+`" "-test.run=TestMainHelperProcess" "--" "emit-no-newline" "exit"`+"\n") {
+		t.Fatalf("missing quoted invocation: %q", got)
+	}
+	if !strings.Contains(got, "diagnostic without newline\nvolnorez: render failed: ") {
+		t.Fatalf("diagnostic and final error collided: %q", got)
+	}
+	if strings.Count(got, "volnorez:") != 1 || !strings.HasSuffix(got, ": exit status 1\n") {
+		t.Fatalf("final error = %q", got)
+	}
+}
+
+func TestMainHelperProcess(t *testing.T) {
+	for i, arg := range os.Args {
+		if arg != "--" || i+1 >= len(os.Args) {
+			continue
+		}
+		if os.Args[i+1] == "emit-no-newline" {
+			_, _ = io.WriteString(os.Stderr, "diagnostic without newline")
+		} else {
+			_, _ = io.WriteString(os.Stderr, os.Args[i+1])
+		}
+		if i+2 < len(os.Args) && os.Args[i+2] == "exit" {
+			os.Exit(1)
+		}
+		os.Exit(0)
 	}
 }
 

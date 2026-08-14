@@ -31,14 +31,25 @@ func TestWriteASSHighlightsExactlyOneWord(t *testing.T) {
 }
 
 func TestWriteASSEscapesDialogueText(t *testing.T) {
-	phrases := []Phrase{{Words: []transcribe.Word{{Text: `a{b}\\c,d`, Start: 0, End: time.Second}}, Text: `a{b}\\c,d`}}
+	text := "a{b}\\N,\\n,\\h\r\nnext\rmore\nend"
+	phrases := []Phrase{{Words: []transcribe.Word{{Text: text, Start: 0, End: time.Second}}, Text: text}}
 	var out bytes.Buffer
 	if err := WriteASS(&out, Document{Duration: time.Second, FontFamily: "Noto Sans", Accent: "#010203", Phrases: phrases}); err != nil {
 		t.Fatal(err)
 	}
 	s := out.String()
-	if !strings.Contains(s, `a\{b\}\\\\c\,d`) {
+	want := "a\\{b\\}\\\u2060N,\\\u2060n,\\\u2060h\\Nnext\\Nmore\\Nend"
+	if !strings.Contains(s, want) {
 		t.Fatalf("unescaped dialogue text:\n%s", s)
+	}
+	if strings.Contains(s, `\,`) {
+		t.Fatalf("dialogue comma must remain literal:\n%s", s)
+	}
+}
+
+func TestStyleFieldEscapingDoesNotUseDialogueOverrides(t *testing.T) {
+	if got, want := escapeStyleField("Font, Name{X}\\N\r\nAlt"), "Font  Name{X}\\N Alt"; got != want {
+		t.Fatalf("escapeStyleField() = %q, want %q", got, want)
 	}
 }
 

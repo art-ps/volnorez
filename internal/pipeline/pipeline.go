@@ -156,10 +156,16 @@ func Run(ctx context.Context, cfg cli.Config, deps Dependencies, progress io.Wri
 		}
 	}
 	if cfg.Force {
+		if err := ctx.Err(); err != nil {
+			return "", &Error{Code: 5, Op: "publishing output", Err: err}
+		}
 		if err := rename(tempOutput, cfg.Output); err != nil {
 			return "", &Error{Code: 5, Op: "publishing output", Err: err}
 		}
 	} else {
+		if err := ctx.Err(); err != nil {
+			return "", &Error{Code: 5, Op: "publishing output", Err: err}
+		}
 		if err := link(tempOutput, cfg.Output); err != nil {
 			code := 5
 			if errors.Is(err, os.ErrExist) {

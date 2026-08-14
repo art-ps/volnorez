@@ -127,8 +127,8 @@ previous complete destination on errors or interruption.
 | Code | Meaning |
 | --- | --- |
 | `0` | Success. |
-| `2` | Parse-time invalid or missing input/model, explicit cover or font path, output collision, or invalid input metadata. |
-| `3` | Runtime missing tools, required tool capabilities, or runtime assets such as an absent cover. |
+| `2` | Invalid arguments, missing input, invalid input metadata, unsupported extensions or values, or output collision. |
+| `3` | Missing model, explicit cover/font/whisper executable, runtime tool, required capability, or runtime asset. |
 | `4` | Transcription failure or no usable timed words. |
 | `5` | Media preparation, rendering, final verification, or publication failure. |
 | `130` | Interrupted by `SIGINT` or `SIGTERM`. |
