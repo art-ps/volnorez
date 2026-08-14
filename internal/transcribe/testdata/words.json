@@ -1,0 +1,8 @@
+{
+  "result": {"language": "ru"},
+  "transcription": [
+    {"timestamps":{"from":"00:00:00,000","to":"00:00:00,420"},"offsets":{"from":0,"to":420},"text":" Привет"},
+    {"timestamps":{"from":"00:00:00,420","to":"00:00:00,760"},"offsets":{"from":420,"to":760},"text":" ,"},
+    {"timestamps":{"from":"00:00:00,760","to":"00:00:01,200"},"offsets":{"from":760,"to":1200},"text":" мир"}
+  ]
+}
