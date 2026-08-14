@@ -1,0 +1,11 @@
+{
+  "result": {"language": "ru"},
+  "transcription": [
+    {"offsets":{"from":100,"to":450},"text":" Это"},
+    {"offsets":{"from":450,"to":850},"text":" короткий"},
+    {"offsets":{"from":850,"to":1250},"text":" тест"},
+    {"offsets":{"from":1400,"to":1800},"text":" живой"},
+    {"offsets":{"from":1800,"to":2250},"text":" звуковой"},
+    {"offsets":{"from":2250,"to":2800},"text":" волны."}
+  ]
+}
