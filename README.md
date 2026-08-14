@@ -35,9 +35,9 @@ volnorez: checking tools: check ffmpeg filters: missing capability subtitles
 
 ### macOS FFmpeg note
 
-The default Homebrew `ffmpeg` at `/opt/homebrew/bin/ffmpeg` (8.1.2) may not
-include the `subtitles` filter/libass. Install the full formula and put it
-ahead of the default formula on `PATH`:
+One tested macOS setup found that Homebrew `ffmpeg` 8.1.2 at
+`/opt/homebrew/bin/ffmpeg` lacked the `subtitles` filter/libass. Install the
+full formula and put it first on `PATH`:
 
 ```bash
 brew tap homebrew-ffmpeg/ffmpeg
@@ -62,8 +62,9 @@ chmod +x volnorez-darwin-arm64
 install -m 755 volnorez-darwin-arm64 /usr/local/bin/volnorez
 ```
 
-Release archives include the binary, `README.md`, `THIRD_PARTY_NOTICES.md`,
-and `SHA256SUMS`. They do not include FFmpeg, whisper.cpp, or a model.
+Releases include the binary, `README.md`, `THIRD_PARTY_NOTICES.md`,
+`NotoSans-OFL.txt`, `golang.org-x-image-LICENSE`, and `SHA256SUMS`. They do
+not include FFmpeg, whisper.cpp, or a model.
 
 ## Build from source
 
@@ -108,8 +109,8 @@ Run `volnorez --help` for the executable's current help text.
 
 ## Cover, title, and model precedence
 
-- Model: `--model`, then `WHISPER_MODEL`; neither is an error.
-- Cover: `--cover`, then embedded MP3 art; neither is an error.
+- Model: `--model`, then `WHISPER_MODEL`; absence of both is an error.
+- Cover: `--cover`, then embedded MP3 art; absence of both is an error.
 - Title: `--title`, then the MP3 title tag; neither leaves the title absent.
 
 ## Output contract
@@ -126,10 +127,10 @@ previous complete destination on errors or interruption.
 | Code | Meaning |
 | --- | --- |
 | `0` | Success. |
-| `2` | Invalid arguments, input metadata, or output collision. |
-| `3` | Missing executable, model, font, cover, or required tool capability. |
+| `2` | Parse-time invalid or missing input/model, explicit cover or font path, output collision, or invalid input metadata. |
+| `3` | Runtime missing tools, required tool capabilities, or runtime assets such as an absent cover. |
 | `4` | Transcription failure or no usable timed words. |
-| `5` | Media preparation, rendering, or final verification failure. |
+| `5` | Media preparation, rendering, final verification, or publication failure. |
 | `130` | Interrupted by `SIGINT` or `SIGTERM`. |
 
 ## Troubleshooting
